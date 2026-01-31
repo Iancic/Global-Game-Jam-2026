@@ -2,8 +2,7 @@ use bevy::{input::ButtonInput, math::Vec3, prelude::*};
 
 // Code from: https://github.com/StarArawn/bevy_ecs_tilemap/blob/main/examples/helpers/camera.rs
 // A simple camera system for moving and zooming the camera.
-#[allow(dead_code)]
-pub fn movement(
+pub fn update_camera(
     time: Res<Time>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Transform, &mut Projection), With<Camera>>,

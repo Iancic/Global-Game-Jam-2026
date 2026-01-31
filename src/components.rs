@@ -4,23 +4,26 @@ use rand::Rng;
 #[derive(Component)]
 pub struct PlayZoneTilemap;
 
+// Sole reason for this component is this
+// https://bevy.org/learn/errors/b0001/
 #[derive(Component)]
-pub struct RoundColorState
-{
+pub struct RoundColorState2;
+
+#[derive(Component)]
+pub struct RoundColorState {
     pub index: i32, // 0 - Red is masked, 1 - Green is masked, 2 - Blue is masked
 }
 
-impl RoundColorState{
-    pub fn asign_random_color(&mut self)
-    {
+impl RoundColorState {
+    pub fn asign_random_color(&mut self) {
         let mut rng = rand::rng();
         self.index = rng.random::<i32>() as i32 % 3; // 0 - red, 1 - green, 2 - blue
     }
 }
 
-impl Default for RoundColorState{
+impl Default for RoundColorState {
     fn default() -> Self {
-        RoundColorState{index: 0}
+        RoundColorState { index: 0 }
     }
 }
 
@@ -36,25 +39,6 @@ pub struct AnimationIndices {
 #[derive(Component, Deref, DerefMut)]
 pub struct AnimationTimer(pub Timer);
 
-pub fn animate_sprite(
-    time: Res<Time>,
-    mut query: Query<(&AnimationIndices, &mut AnimationTimer, &mut Sprite)>,
-) {
-    for (indices, mut timer, mut sprite) in &mut query {
-        timer.tick(time.delta());
-
-        if timer.just_finished()
-            && let Some(atlas) = &mut sprite.texture_atlas
-        {
-            atlas.index = if atlas.index == indices.last {
-                indices.first
-            } else {
-                atlas.index + 1
-            };
-        }
-    }
-}
-
 #[derive(Component)]
 pub struct Player;
 
@@ -64,8 +48,6 @@ pub struct Enemy;
 #[derive(Component)]
 pub struct Troop;
 
-// This controls the flow inside the application
-// Application State
 pub enum ApplicationState {
     MainMenu,
     Gameplay,
@@ -85,18 +67,15 @@ impl Default for GlobalApplicationState {
     }
 }
 
-// This controls the flow inside the gameplay stage
-// Turn State
-
 #[derive(Clone, Copy)]
 pub enum TurnState {
-    ColorPick,    // a color mask gets picked
-    PlayerChange, // change player color and change for state
-    EnemySpawn,   // spawn enemies
-    MovePlayer,   // move player
-    AttackPlayer, // player attacks
-    MoveEnemy,  // move enemies
-    AttackEnemy,  // enemy attacks
+    ColorPick,
+    PlayerChange,
+    EnemySpawn,
+    MovePlayer,
+    AttackPlayer,
+    MoveEnemy,
+    AttackEnemy,
 }
 
 #[derive(Component)]
@@ -112,9 +91,8 @@ impl Default for GlobalTurnState {
     }
 }
 
-impl GlobalTurnState{
-    pub fn modify_state(&mut self, new_state: TurnState)
-    {
+impl GlobalTurnState {
+    pub fn modify_state(&mut self, new_state: TurnState) {
         self.turn_state = new_state;
     }
 }
