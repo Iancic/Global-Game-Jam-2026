@@ -42,7 +42,7 @@ pub fn movement(
         if ortho.scale < 0.5 {
             ortho.scale = 0.5;
         }
-
+        ortho.scale = 0.5;
         let z = transform.translation.z;
         transform.translation += time.delta_secs() * direction * 500.;
         // Important! We need to restore the Z values when moving the camera around.

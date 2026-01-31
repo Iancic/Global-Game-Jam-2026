@@ -68,6 +68,9 @@ const LAYER_PLAYER: u8 = 2;
 const LAYER_TILEMAP: u8 = 1;
 
 fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    
+    
+
     // Spawn Camera
     commands.spawn(Camera2d);
 
@@ -76,6 +79,38 @@ fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     // Spawn Turn State, this controls the turn based mechanics of the game.
     commands.spawn(GlobalTurnState::default());
+
+    // SPawn Spectrum
+    let texture_handle_blue: bevy::prelude::Handle<Image> = asset_server.load("Spectrum-Blue-Sphere.png");
+    let texture_handle_red: bevy::prelude::Handle<Image> = asset_server.load("Spectrum-Red-Sphere.png");
+    let texture_handle_green: bevy::prelude::Handle<Image> = asset_server.load("Spectrum-Green-Sphere.png");
+
+    commands.spawn((
+        Sprite{
+            image: texture_handle_red.clone(),
+            // Alpha channel of the color controls transparency.
+            color: Color::srgba(1.0, 0.0, 0.0, 0.7),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.3, 3.2),
+    ));
+    commands.spawn((
+        Sprite {
+            image: texture_handle_green,
+            color: Color::srgba(0.0, 1.0, 0.0, 0.7),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.3, 3.2),
+    ));
+    commands.spawn((
+        Sprite {
+            image: texture_handle_blue.clone(),
+            color: Color::srgba(0.0, 0.0, 1.0, 0.7),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.3, 3.2),
+    ));
+    
 
     // Spawn Player: troop, player, sprite and transform components.
     commands.spawn((
@@ -243,43 +278,43 @@ fn end_menu() {
     println!("This is the end menu!");
 }
 
+// helper
+fn clamp_tile(pos: TilePos, size: TilemapSize) -> TilePos {
+    let max_x = (size.x - 1) as i32;
+    let max_y = (size.y - 1) as i32;
+
+    let x = (pos.x as i32).clamp(0, max_x) as u32;
+    let y = (pos.y as i32).clamp(0, max_y) as u32;
+
+    TilePos { x, y }
+}
+
 fn keyboard_input(keys: Res<ButtonInput<KeyCode>>,
     mut player_q: Query<&mut TilePos, With<Player>>, // We want the player
     tilemap_q: Query<(&TileStorage, &TilemapSize)>, // Retrieve the tilemap and it's bundaries for safe writing
     mut tile_q: Query<&mut TileColor>,
 ){
-
-
+    // Move The Player
+    // TODO: possible PS5 controller path
     if keys.just_pressed(KeyCode::Escape) {
         std::process::exit(0);
     }
 
-    let Ok((storage, map_size)) = tilemap_q.single() else {
-        println!("No tilemap.");
-        return;
-    };
+    let Ok((_storage, map_size)) = tilemap_q.single() else { return; };
 
-    // Move The Player
-    // TODO: possible PS5 controller path
-    for mut pos in player_q.iter_mut(){
-        if keys.just_pressed(KeyCode::ArrowUp) {
-            *pos = TilePos{x: pos.x, y: pos.y + 1}
-        }
-        if keys.just_pressed(KeyCode::ArrowLeft) {
-            *pos = TilePos{x: pos.x.wrapping_sub(1), y: pos.y}
-            
-        }
-        if keys.just_pressed(KeyCode::ArrowDown) {
-            *pos = TilePos{x: pos.x, y: pos.y.wrapping_sub(1)}
-        }
-        if keys.just_pressed(KeyCode::ArrowRight) {
-            *pos = TilePos{x: pos.x + 1, y: pos.y}
-        }
+    for mut pos in player_q.iter_mut() {
+        let mut next = *pos;
+
+        if keys.just_pressed(KeyCode::ArrowUp)    { next.y += 1; }
+        if keys.just_pressed(KeyCode::ArrowDown) { next.y = next.y.saturating_sub(1); }
+        if keys.just_pressed(KeyCode::ArrowRight){ next.x += 1; }
+        if keys.just_pressed(KeyCode::ArrowLeft) { next.x = next.x.saturating_sub(1); }
+
+        *pos = clamp_tile(next, *map_size);
     }
 
-    // Player Paint
     if keys.just_pressed(KeyCode::Space) {
-        color_player_neighbors(player_q, tilemap_q, tile_q); // ASK here what this does
+        color_player_neighbors(player_q, tilemap_q, tile_q);
     }
 }
 
