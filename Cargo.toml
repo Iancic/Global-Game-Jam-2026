@@ -12,3 +12,4 @@ opt-level = 3
 [dependencies]
 bevy = "0.18.0"
 bevy_ecs_tilemap = "0.18.1"
+bevy_egui = "0.39.0"

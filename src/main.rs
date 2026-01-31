@@ -1,7 +1,12 @@
+use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
+use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
+use bevy::window::WindowMode;
+use bevy::ecs::event::*;
 
 mod camera;
+mod editor;
 
 #[derive(Component)]
 struct Player;
@@ -9,55 +14,27 @@ struct Player;
 #[derive(Component)]
 struct Enemy;
 
-enum TroopType {
-    Enemy,
-    Player,
-}
-
-enum TroopColor {
-    Red,
-    Green,
-    Blue,
-    Yellow,
-    Magenta,
-    Cyan,
-}
-
 #[derive(Component)]
-struct Troop {
-    position_x: u32,
-    position_y: u32,
-    troop_type: TroopType,
-    troop_color: TroopColor,
-}
-
-impl Default for Troop {
-    fn default() -> Self {
-        Troop {
-            position_x: 0,
-            position_y: 0,
-            troop_type: TroopType::Enemy,
-            troop_color: TroopColor::Red,
-        }
-    }
-}
+struct Troop;
 
 // This controls the flow inside the application
 // Application State
-enum ApplicationState{
+enum ApplicationState {
     MainMenu,
     Gameplay,
-    EndMenu
+    EndMenu,
 }
 
 #[derive(Component)]
-struct GlobalApplicationState{
-    application_state: ApplicationState
+struct GlobalApplicationState {
+    application_state: ApplicationState,
 }
 
-impl Default for GlobalApplicationState{
-    fn default() -> Self{
-        GlobalApplicationState{application_state: ApplicationState::MainMenu,}
+impl Default for GlobalApplicationState {
+    fn default() -> Self {
+        GlobalApplicationState {
+            application_state: ApplicationState::MainMenu,
+        }
     }
 }
 
@@ -87,9 +64,10 @@ impl Default for GlobalTurnState {
 }
 
 const TILEMAP_SIDE_LENGHT: u32 = 16;
+const LAYER_PLAYER: u8 = 2;
+const LAYER_TILEMAP: u8 = 1;
 
 fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    
     // Spawn Camera
     commands.spawn(Camera2d);
 
@@ -99,10 +77,16 @@ fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Spawn Turn State, this controls the turn based mechanics of the game.
     commands.spawn(GlobalTurnState::default());
 
-    // Spawn Player: player, sprite and transform components.
-    commands.spawn((Player, Transform::from_xyz(0., 0., 1.), Sprite::from_image(asset_server.load("character.png"))));
+    // Spawn Player: troop, player, sprite and transform components.
+    commands.spawn((
+        Troop,
+        Player,
+        TilePos { x: 10, y: 10 },
+        Transform::from_xyz(0., 0., LAYER_PLAYER as f32),
+        Sprite::from_image(asset_server.load("character.png")),
+    ));
 
-    // Tilemap  
+    // Tilemap
     // From bevy_ecs_tilemap/accesing_tiles examples
     // Image Asset
     let texture_handle: Handle<Image> = asset_server.load("tilemap_packed.png");
@@ -135,7 +119,8 @@ fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ..Default::default()
                 })
                 .id();
-            // Here we let the tile storage component know what tiles we have.
+
+            // Here I set the tile storage to component know what tiles we have like the graphical content.
             tile_storage.set(&tile_pos, tile_entity);
             if let Some(tile_entity) = tile_storage.get(&tile_pos) {
                 commands.entity(tile_entity).insert(TileTextureIndex(1));
@@ -162,18 +147,15 @@ fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
         anchor: TilemapAnchor::Center,
         ..Default::default()
     },));
+
+    commands
+        .entity(tilemap_entity)
+        .insert(Transform::from_xyz(0., 0., LAYER_TILEMAP as f32));
 }
 
-// Query the global game state to keep track of current state and implement
-// turn based logic.
-fn logical_turn(mut commands: Commands, time: Res<Time>, mut query: Query<&mut GlobalTurnState>) {
-
-}
-
-fn update(mut commands: Commands, time: Res<Time>, mut query: Query<&mut GlobalApplicationState>) {
-    for mut appState in &mut query
-    {
-        match appState.application_state{
+fn update(commands: Commands, time: Res<Time>, mut query: Query<&mut GlobalApplicationState>) {
+    for app_state in &mut query {
+        match app_state.application_state {
             ApplicationState::MainMenu => main_menu(),
             ApplicationState::Gameplay => gameplay(),
             ApplicationState::EndMenu => end_menu(),
@@ -181,19 +163,124 @@ fn update(mut commands: Commands, time: Res<Time>, mut query: Query<&mut GlobalA
     }
 }
 
-fn main_menu()
-{
+fn main_menu() {
     println!("This is the main menu!");
 }
 
-fn gameplay()
-{
+fn gameplay() {
     println!("This is the gameplay!");
 }
 
-fn end_menu()
-{
+fn logical_turn(mut commands: Commands, time: Res<Time>, mut query: Query<&mut GlobalTurnState>) {}
+
+// GAMEPLAY LOGIC: I should make this as plugin
+
+// Credit: snapping idea to center in world from Codex 5.2
+fn snap_troop_to_tilemap(
+    mut player_q: Query<(&TilePos, &mut Transform), With<Troop>>, // All entities with transform, player and position
+    tilemap_q: Query<(
+        &TilemapSize,
+        &TilemapGridSize,
+        &TilemapTileSize,
+        &TilemapType,
+        &TilemapAnchor,
+    )>, // Necessary for center in world
+) {
+    // Tries to query for an entity with the data required to snap.
+    // If there is none we have nothing to store, doesn't pass the Ok check move on.
+    let Ok((map_size, grid_size, tile_size, map_type, anchor)) = tilemap_q.single() else {
+        println!("No tilemap.");
+        return;
+    };
+
+    for (tile_pos, mut transform) in player_q.iter_mut() {
+        // Retrieve center from the tilemap:
+        let center = tile_pos.center_in_world(map_size, grid_size, tile_size, map_type, anchor);
+
+        // Change the transform from the player
+        transform.translation.x = center.x;
+        transform.translation.y = center.y;
+        transform.translation.z = LAYER_PLAYER as f32;
+    }
+}
+
+// Credit: inspiration for retrieving the neighboring tiles using Codex 5.2
+fn color_player_neighbors(
+    mut player_q: Query<&mut TilePos, With<Player>>, // We want the player
+    tilemap_q: Query<(&TileStorage, &TilemapSize)>, // Retrieve the tilemap and it's bundaries for safe writing
+    mut tile_q: Query<&mut TileColor>,
+) {
+    let Ok((storage, map_size)) = tilemap_q.single() else {
+        println!("No tilemap.");
+        return;
+    };
+    // Now that I have where the player is in tile position,
+    // I make an array with all positions around him
+    for pos in player_q.iter(){
+        
+        let neighbors = [
+            *pos, // Where I am now
+            TilePos{x: pos.x + 1, y: pos.y}, // Right side
+            TilePos{x: pos.x.wrapping_sub(1), y: pos.y}, // Left side
+            TilePos{x: pos.x, y: pos.y + 1}, // Top side
+            TilePos{x: pos.x, y: pos.y.wrapping_sub(1)}, // Bottom side
+        ];
+        // With these new positions I can iterate them one by one and if not outside the bounds color them
+        for tile in neighbors {
+            if tile.x < map_size.x && tile.y < map_size.y { // the neighbouring tile can be outside that is invalid
+                if let Some(tile_entity) = storage.get(&tile){ // retrieve entity
+                    if let Ok(mut color) = tile_q.get_mut(tile_entity) // If there is a retrievable tile
+                    {
+                        *color = TileColor(Color::srgba(1.0, 0.0, 0.0, 1.0)); // TODO: red for now but make it based on
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn end_menu() {
     println!("This is the end menu!");
+}
+
+fn keyboard_input(keys: Res<ButtonInput<KeyCode>>,
+    mut player_q: Query<&mut TilePos, With<Player>>, // We want the player
+    tilemap_q: Query<(&TileStorage, &TilemapSize)>, // Retrieve the tilemap and it's bundaries for safe writing
+    mut tile_q: Query<&mut TileColor>,
+){
+
+
+    if keys.just_pressed(KeyCode::Escape) {
+        std::process::exit(0);
+    }
+
+    let Ok((storage, map_size)) = tilemap_q.single() else {
+        println!("No tilemap.");
+        return;
+    };
+
+    // Move The Player
+    // TODO: possible PS5 controller path
+    for mut pos in player_q.iter_mut(){
+        if keys.just_pressed(KeyCode::ArrowUp) {
+            *pos = TilePos{x: pos.x, y: pos.y + 1}
+        }
+        if keys.just_pressed(KeyCode::ArrowLeft) {
+            *pos = TilePos{x: pos.x.wrapping_sub(1), y: pos.y}
+            
+        }
+        if keys.just_pressed(KeyCode::ArrowDown) {
+            *pos = TilePos{x: pos.x, y: pos.y.wrapping_sub(1)}
+        }
+        if keys.just_pressed(KeyCode::ArrowRight) {
+            *pos = TilePos{x: pos.x + 1, y: pos.y}
+        }
+    }
+
+    // Player Paint
+    if keys.just_pressed(KeyCode::Space) {
+        color_player_neighbors(player_q, tilemap_q, tile_q); // ASK here what this does
+    }
 }
 
 fn main() {
@@ -203,16 +290,23 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: String::from("Accessing Tiles Example"),
+                        mode: WindowMode::Fullscreen(MonitorSelection::Primary, VideoModeSelection ::Current),
+                        resolution: (1920, 1080).into(),
+                        position: WindowPosition::Centered(MonitorSelection::Primary),
                         ..Default::default()
                     }),
                     ..default()
                 })
                 .set(ImagePlugin::default_nearest()),
-        )
-        .add_plugins(TilemapPlugin)
-        .add_systems(Startup, startup)
-        .add_systems(Update, camera::movement)
+        ) // Plugin: Window
+        .add_plugins(EguiPlugin::default()) // Plugin: Egui
+        .add_plugins(TilemapPlugin) // Plugin: Tilemap
+        .add_systems(Startup, startup) // Startup
+        .add_systems(Update, keyboard_input) // Input: keyboard
+        .add_systems(Update, camera::movement) // Input: camera from Bevy's official example code
         .add_systems(Update, update)
-        .add_systems(Update, logical_turn)
+        .add_systems(Update, logical_turn) // Update: Turn Based Logic, Gameplay
+        .add_systems(Update, snap_troop_to_tilemap) // Update: Troop Snap, Gameplay
+        .add_systems(EguiPrimaryContextPass, editor::ui_example_system) // Update: Egui
         .run();
 }
