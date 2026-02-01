@@ -16,7 +16,7 @@ pub fn setup_font(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = asset_server.load("fonts/SNPro-VariableFont_wght.ttf");
     let text_font = TextFont {
         font: font.clone(),
-        font_size: 13.0,
+        font_size: 12.0,
         ..default()
     };
     let text_justification = Justify::Center;
@@ -24,10 +24,10 @@ pub fn setup_font(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Text2d::new(""),
         text_font,
-        TextLayout::new_with_justify(text_justification),
-        Transform::from_translation(Vec3::new(0.0, 135.0, 4.0f32)),
+        TextLayout::new_with_justify(text_justification).with_no_wrap(),
+        TextColor(Color::WHITE),
+        Transform::from_translation(Vec3::new(0.0, -120.0, 4.0)),
         TextBackgroundColor(Color::BLACK.with_alpha(0.0)),
-        AnimateScale,
     ));
 }
 
@@ -41,23 +41,14 @@ pub fn render_translated_text(
     }
 }
 
-// Credit: ChatGPT Codex
+// Credit: ChatGPT Codex cause I needed to convert the state of the game fast
 pub fn render_rotated_text(
-    time: Res<Time>,
-    mut query: Query<(&mut Transform, &mut Text2d, &mut TextColor), With<AnimateRotation>>,
+    mut query: Query<(&mut Transform, &mut Text2d, &mut TextColor), With<Text2d>>,
     color_state: Query<&RoundColorState>,
     turn_state: Query<&GlobalTurnState>,
 ) {
-    // Render the color name and turn status in the text itself.
-    let (color_label, color) = match color_state.single() {
-        Ok(color_state) => match color_state.index {
-            0 => ("Cyan", Color::srgba(0.0, 1.0, 1.0, 1.0)),
-            1 => ("Magenta", Color::srgba(1.0, 0.0, 1.0, 1.0)),
-            2 => ("Yellow", Color::srgba(1.0, 1.0, 0.0, 1.0)),
-            _ => ("", Color::WHITE),
-        },
-        Err(_) => ("", Color::WHITE),
-    };
+    
+    let color = Color::BLACK;
 
     let status_label = match turn_state.single() {
         Ok(state) => match state.turn_state {
@@ -72,14 +63,10 @@ pub fn render_rotated_text(
         Err(_) => "Status",
     };
 
-    let text_value = if color_label.is_empty() {
-        status_label.to_string()
-    } else {
-        format!("{status_label} ({color_label})")
-    };
+    let text_value = status_label.to_string();
 
     for (mut transform, mut text, mut text_color) in &mut query {
-        transform.rotation = Quat::from_rotation_z(ops::cos(time.elapsed_secs()));
+        transform.rotation = Quat::IDENTITY;
         text_color.0 = color;
         text.0 = text_value.clone();
     }

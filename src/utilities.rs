@@ -1,5 +1,7 @@
 use crate::components::*;
 use bevy::prelude::*;
+use std::thread::sleep;
+use std::time::Duration;
 
 pub fn update_animated_sprites(
     time: Res<Time>,
@@ -20,4 +22,12 @@ pub fn update_animated_sprites(
             };
         }
     }
+}
+
+// Utility generated with Codex, just stops the game for a bit, will be used in turns
+pub fn sleep_seconds(seconds: f32) {
+    if seconds <= 0.0 {
+        return;
+    }
+    sleep(Duration::from_secs_f32(seconds));
 }

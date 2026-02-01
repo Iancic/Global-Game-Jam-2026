@@ -6,36 +6,133 @@ use bevy::prelude::*;
 use bevy_ecs_tiled::prelude::*;
 use rand::Rng;
 
-pub fn update_game_logic(
+#[derive(Default)]
+pub(crate) struct StateEntryDelay {
+    last_state: Option<TurnState>,
+    // One-shot timer used to pause only once when a state is entered.
+    timer: Option<Timer>,
+}
+
+impl StateEntryDelay {
+    // Reset the delay whenever the turn state changes.
+    fn on_state_change(&mut self, state: TurnState) {
+        if self.last_state != Some(state) {
+            self.last_state = Some(state);
+            self.timer = None;
+        }
+    }
+
+    // Non-blocking wait: returns true once the delay has elapsed.
+    fn wait(&mut self, time: &Time, seconds: f32) -> bool {
+        if seconds <= 0.0 {
+            return true;
+        }
+        match self.timer.as_mut() {
+            Some(timer) => {
+                // Tick the timer until it finishes; stays finished until state changes.
+                timer.tick(time.delta());
+                timer.is_finished()
+            }
+            None => {
+                // First call in this state: start the timer and pause this frame.
+                self.timer = Some(Timer::from_seconds(seconds, TimerMode::Once));
+                false
+            }
+        }
+    }
+}
+
+#[derive(Default, PartialEq, Eq)]
+enum EnemyAttackPhase {
+    #[default]
+    Idle,
+    Windup,
+    Cooldown,
+}
+
+#[derive(Default)]
+pub(crate) struct EnemyAttackDelay {
+    phase: EnemyAttackPhase,
+    // Timer for the current enemy attack phase (windup or cooldown).
+    timer: Option<Timer>,
+}
+
+impl EnemyAttackDelay {
+    // Clear attack timing when leaving the enemy attack state.
+    fn reset(&mut self) {
+        self.phase = EnemyAttackPhase::Idle;
+        self.timer = None;
+    }
+
+    // Non-blocking wait used by the enemy attack phases.
+    fn wait(&mut self, time: &Time, seconds: f32) -> bool {
+        if seconds <= 0.0 {
+            return true;
+        }
+        match self.timer.as_mut() {
+            Some(timer) => {
+                // Tick current phase timer until done.
+                timer.tick(time.delta());
+                if timer.is_finished() {
+                    self.timer = None;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                // Start a new phase timer and pause this frame.
+                self.timer = Some(Timer::from_seconds(seconds, TimerMode::Once));
+                false
+            }
+        }
+    }
+}
+
+pub(crate) fn update_game_logic(
     keys: Res<ButtonInput<KeyCode>>,
     commands: Commands,
     mut query: Query<&mut GlobalTurnState>,
+    time: Res<Time>,
+    mut state_entry_delay: Local<StateEntryDelay>,
+    mut enemy_attack_delay: Local<EnemyAttackDelay>,
     asset_server: Res<AssetServer>,
     texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
-    colorstate: Query<&mut RoundColorState>,
-    tilemap_q: Query<
-        (
-            &TilemapSize,
-            &TilemapGridSize,
-            &TilemapTileSize,
-            &TilemapType,
-            &TilemapAnchor,
-        ),
-        With<PlayZoneTilemap>,
-    >,
+    mut colorstate: Query<&mut RoundColorState>,
+    spectrum_q: Query<Entity, With<SpectrumElement>>,
+    mut tilemap_set: ParamSet<(
+        Query<
+            (
+                &TilemapSize,
+                &TilemapGridSize,
+                &TilemapTileSize,
+                &TilemapType,
+                &TilemapAnchor,
+            ),
+            With<PlayZoneTilemap>,
+        >,
+        Query<(&TileStorage, &TilemapSize), With<PlayZoneTilemap>>,
+    )>,
     player_q2: Query<&mut Sprite, With<Player>>,
     enemy_q: Query<&mut Sprite, (With<Enemy>, Without<Player>)>,
-    mut player_query: Query<&mut TilePos, With<Player>>,
-    tilemap_query: Query<(&TileStorage, &TilemapSize), With<PlayZoneTilemap>>,
-    tile_query: Query<&mut TileColor>,
+    mut enemy_pos_q: Query<(Entity, &mut TilePos), (With<Enemy>, Without<Player>)>,
+    mut player_query: Query<(Entity, &mut TilePos), (With<Player>, Without<Enemy>)>,
+    mut tile_query: Query<&mut TileColor>,
 ) {
     // Retrieve the global turn state.
     // This component dictates what action is done next.
     // Enemy attack, Player attack, etc.
     for mut turn_state_entity in query.iter_mut() {
+        // Track state transitions so per-state delays only run once.
+        state_entry_delay.on_state_change(turn_state_entity.turn_state);
+        // Reset enemy attack timing when we're not in the enemy attack state.
+        if turn_state_entity.turn_state != TurnState::AttackEnemy {
+            enemy_attack_delay.reset();
+        }
+
         match turn_state_entity.turn_state {
             TurnState::ColorPick => {
-                color_pick_update(commands, asset_server, colorstate);
+                color_pick_update(commands, asset_server, &mut colorstate, &spectrum_q);
                 
                 turn_state_entity.modify_state(TurnState::PlayerChange);
                 return;
@@ -49,17 +146,38 @@ pub fn update_game_logic(
             }
             TurnState::EnemySpawn => {
                 let mut rng = rand::rng();
-                spawn_enemy(rng.random_range(0..15) as u32, rng.random_range(13..15) as u32, commands, asset_server, texture_atlas_layouts);
+                let mut spawn_pos = None;
+                for _ in 0..8 {
+                    let x = rng.random_range(0..15) as u32;
+                    let y = rng.random_range(13..15) as u32;
+                    let occupied = enemy_pos_q
+                        .iter_mut()
+                        .any(|(_, pos)| pos.x == x && pos.y == y);
+                    if !occupied {
+                        spawn_pos = Some((x, y));
+                        break;
+                    }
+                }
+
+                if let Some((x, y)) = spawn_pos {
+                    spawn_enemy(x, y, commands, asset_server, texture_atlas_layouts);
+                }
                 turn_state_entity.modify_state(TurnState::MovePlayer);
                 return;
             }
             TurnState::MovePlayer => {
-                let Ok((map_size, _grid_size, _tile_size, _map_type, _anchor)) = tilemap_q.single()
+                // Short pause before allowing player movement.
+                if !state_entry_delay.wait(&time, MOVE_DELAY_SECONDS) {
+                    return;
+                }
+                let tilemap_q = tilemap_set.p0();
+                let Ok((map_size, _grid_size, _tile_size, _map_type, _anchor)) =
+                    tilemap_q.single()
                 else {
                     return;
                 };
 
-                for mut tile_pos in player_query.iter_mut() {
+                for (_, mut tile_pos) in player_query.iter_mut() {
                     let mut next = *tile_pos;
 
                     if keys.just_pressed(KeyCode::ArrowUp) {
@@ -94,33 +212,65 @@ pub fn update_game_logic(
                 if keys.just_pressed(KeyCode::KeyQ) {
                     color_player_neighbors(
                         AttackPattern::Diagonal,
-                        player_query,
-                        tilemap_query,
-                        tile_query,
+                        &mut player_query,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
+                    );
+                    despawn_enemies_on_matching_tile_color(
+                        commands,
+                        &mut enemy_pos_q,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
                     );
                     turn_state_entity.modify_state(TurnState::MoveEnemy);
                 } else if keys.just_pressed(KeyCode::KeyW) {
                     color_player_neighbors(
                         AttackPattern::Sides,
-                        player_query,
-                        tilemap_query,
-                        tile_query,
+                        &mut player_query,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
+                    );
+                    despawn_enemies_on_matching_tile_color(
+                        commands,
+                        &mut enemy_pos_q,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
                     );
                     turn_state_entity.modify_state(TurnState::MoveEnemy);
                 } else if keys.just_pressed(KeyCode::KeyE) {
                     color_player_neighbors(
                         AttackPattern::Around,
-                        player_query,
-                        tilemap_query,
-                        tile_query,
+                        &mut player_query,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
+                    );
+                    despawn_enemies_on_matching_tile_color(
+                        commands,
+                        &mut enemy_pos_q,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
                     );
                     turn_state_entity.modify_state(TurnState::MoveEnemy);
                 } else if keys.just_pressed(KeyCode::KeyR) {
                     color_player_neighbors(
                         AttackPattern::Ultimate,
-                        player_query,
-                        tilemap_query,
-                        tile_query,
+                        &mut player_query,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
+                    );
+                    despawn_enemies_on_matching_tile_color(
+                        commands,
+                        &mut enemy_pos_q,
+                        tilemap_set.p1(),
+                        &mut tile_query,
+                        &colorstate,
                     );
                     turn_state_entity.modify_state(TurnState::MoveEnemy);
                 }
@@ -128,12 +278,57 @@ pub fn update_game_logic(
                 return;
             }
             TurnState::MoveEnemy => {
+                // Short pause before enemy movement.
+                if !state_entry_delay.wait(&time, MOVE_DELAY_SECONDS) {
+                    return;
+                }
+                for (_, mut tile_pos) in enemy_pos_q.iter_mut() {
+                    tile_pos.y = tile_pos.y.saturating_sub(1);
+                }
                 turn_state_entity.modify_state(TurnState::AttackEnemy);
                 return;
             }
             TurnState::AttackEnemy => {
-                turn_state_entity.modify_state(TurnState::ColorPick);
-                return;
+                match enemy_attack_delay.phase {
+                    EnemyAttackPhase::Idle => {
+                        // Start the windup phase on first entry.
+                        enemy_attack_delay.phase = EnemyAttackPhase::Windup;
+                        enemy_attack_delay.timer = None;
+                        return;
+                    }
+                    EnemyAttackPhase::Windup => {
+                        // Windup delay before the enemy attack happens.
+                        if !enemy_attack_delay.wait(&time, ENEMY_ATTACK_WINDUP_SECONDS) {
+                            return;
+                        }
+                        color_enemy_neighbors(
+                            &mut enemy_pos_q,
+                            tilemap_set.p1(),
+                            &mut tile_query,
+                            &colorstate,
+                        );
+                        despawn_player_on_matching_tile_color(
+                            commands,
+                            &mut player_query,
+                            tilemap_set.p1(),
+                            &mut tile_query,
+                            &colorstate,
+                        );
+                        // After attacking, enter cooldown phase.
+                        enemy_attack_delay.phase = EnemyAttackPhase::Cooldown;
+                        enemy_attack_delay.timer = None;
+                        return;
+                    }
+                    EnemyAttackPhase::Cooldown => {
+                        // Cooldown delay after the attack, before the next turn.
+                        if !enemy_attack_delay.wait(&time, ENEMY_ATTACK_COOLDOWN_SECONDS) {
+                            return;
+                        }
+                        enemy_attack_delay.reset();
+                        turn_state_entity.modify_state(TurnState::ColorPick);
+                        return;
+                    }
+                }
             }
         }
     }
@@ -142,12 +337,19 @@ pub fn update_game_logic(
 fn color_pick_update(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    mut color_state: Query<&mut RoundColorState>,
+    color_state_q: &mut Query<&mut RoundColorState>,
+    spectrum_q: &Query<Entity, With<SpectrumElement>>,
 ) {
     let offset_up = 178.0f32;
     let offset_right = 61.0f32;
 
-    for mut color_state in color_state.iter_mut() {
+    // Despawn the color sprites from before
+    // There might be smarter ways to update existing sprites though
+    for entity in spectrum_q.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    for mut color_state in color_state_q.iter_mut() {
         color_state.asign_random_color();
 
         // Load Spectrum Sprites

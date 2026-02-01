@@ -67,7 +67,7 @@ impl Default for GlobalApplicationState {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
     ColorPick,
     PlayerChange,

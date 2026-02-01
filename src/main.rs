@@ -65,7 +65,7 @@ fn main() {
                 update_player_troop_to_tilemap,
                 update_enemy_troop_to_tilemap,
                 update_animated_sprites,
-                render_scaled_text,
+                render_rotated_text,
                 render_post_processing,
             ),
         )
