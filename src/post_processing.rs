@@ -24,7 +24,7 @@ pub use bevy::{
 };
 
 /// This example uses a shader source file from the assets subdirectory
-const SHADER_ASSET_PATH: &str = "shaders/post_processing.wgsl";
+const SHADER_ASSET_PATH: &str = "shaders/crt_shader.wgsl";
 
 /// It is generally encouraged to set up post processing effects as a plugin
 pub struct PostProcessPlugin;
@@ -271,20 +271,6 @@ fn init_post_process_pipeline(
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct PostProcessSettings {
     pub intensity: f32,
-    // WebGL2 structs must be 16 byte aligned.
-    #[cfg(feature = "webgl2")]
-    _webgl2_padding: Vec3,
-}
-
-#[derive(Component)]
-struct Rotates;
-
-/// Rotates any entity around the x and y axis
-fn rotate(time: Res<Time>, mut query: Query<&mut Transform, With<Rotates>>) {
-    for mut transform in &mut query {
-        transform.rotate_x(0.55 * time.delta_secs());
-        transform.rotate_z(0.15 * time.delta_secs());
-    }
 }
 
 // Change the intensity over time to show that the effect is controlled from the main world
@@ -292,11 +278,11 @@ pub fn render_post_processing(mut settings: Query<&mut PostProcessSettings>, tim
     for mut setting in &mut settings {
         let mut intensity = ops::sin(time.elapsed_secs());
         // Make it loop periodically
-        intensity = ops::sin(intensity);
+        //intensity = ops::sin(intensity);
         // Remap it to 0..1 because the intensity can't be negative
-        intensity = intensity * 0.5 + 0.5;
+        //intensity = intensity * 0.5 + 0.5;
         // Scale it to a more reasonable level
-        intensity *= 0.00015;
+        //intensity *= 0.00015;
 
         // Set the intensity.
         // This will then be extracted to the render world and uploaded to the GPU automatically by the [`UniformComponentPlugin`]

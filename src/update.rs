@@ -1,18 +1,18 @@
 use crate::components::*;
 use crate::constants::*;
 use crate::troop_utilities::*;
-use crate::utilities::*;
 
 use bevy::prelude::*;
 use bevy_ecs_tiled::prelude::*;
+use rand::Rng;
 
 pub fn update_game_logic(
+    keys: Res<ButtonInput<KeyCode>>,
     commands: Commands,
     mut query: Query<&mut GlobalTurnState>,
     asset_server: Res<AssetServer>,
     texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     colorstate: Query<&mut RoundColorState>,
-    player_q: Query<(&TilePos, &mut Transform), With<Troop>>, // All entities with transform, player and position
     tilemap_q: Query<
         (
             &TilemapSize,
@@ -23,10 +23,11 @@ pub fn update_game_logic(
         ),
         With<PlayZoneTilemap>,
     >,
-    player_q2: Query<&mut Sprite, (With<Player>, Without<Enemy>)>,
+    player_q2: Query<&mut Sprite, With<Player>>,
     enemy_q: Query<&mut Sprite, (With<Enemy>, Without<Player>)>,
-    time: Res<Time>,
-    query_anim: Query<(&AnimationIndices, &mut AnimationTimer, &mut Sprite), (Without<Player>, Without<Enemy>)>,
+    mut player_query: Query<&mut TilePos, With<Player>>,
+    tilemap_query: Query<(&TileStorage, &TilemapSize), With<PlayZoneTilemap>>,
+    tile_query: Query<&mut TileColor>,
 ) {
     // Retrieve the global turn state.
     // This component dictates what action is done next.
@@ -35,24 +36,95 @@ pub fn update_game_logic(
         match turn_state_entity.turn_state {
             TurnState::ColorPick => {
                 color_pick_update(commands, asset_server, colorstate);
+                
                 turn_state_entity.modify_state(TurnState::PlayerChange);
                 return;
             }
             TurnState::PlayerChange => {
+                update_player_color(player_q2, &colorstate);
+                update_enemy_color(enemy_q, &colorstate);
+
                 turn_state_entity.modify_state(TurnState::EnemySpawn);
                 return;
             }
             TurnState::EnemySpawn => {
-                spawn_enemy(15, 15, commands, asset_server, texture_atlas_layouts);
+                let mut rng = rand::rng();
+                spawn_enemy(rng.random_range(0..15) as u32, rng.random_range(13..15) as u32, commands, asset_server, texture_atlas_layouts);
                 turn_state_entity.modify_state(TurnState::MovePlayer);
                 return;
             }
             TurnState::MovePlayer => {
-                //turn_state_entity.modify_state(TurnState::AttackPlayer);
+                let Ok((map_size, _grid_size, _tile_size, _map_type, _anchor)) = tilemap_q.single()
+                else {
+                    return;
+                };
+
+                for mut tile_pos in player_query.iter_mut() {
+                    let mut next = *tile_pos;
+
+                    if keys.just_pressed(KeyCode::ArrowUp) {
+                        next.y += 1;
+                        turn_state_entity.modify_state(TurnState::AttackPlayer);
+                    }
+                    if keys.just_pressed(KeyCode::ArrowDown) {
+                        next.y = next.y.saturating_sub(1);
+                        turn_state_entity.modify_state(TurnState::AttackPlayer);
+                    }
+                    if keys.just_pressed(KeyCode::ArrowRight) {
+                        next.x += 1;
+                        turn_state_entity.modify_state(TurnState::AttackPlayer);
+                    }
+                    if keys.just_pressed(KeyCode::ArrowLeft) {
+                        next.x = next.x.saturating_sub(1);
+                        turn_state_entity.modify_state(TurnState::AttackPlayer);
+                    }
+
+                    let max_x = (map_size.x - 1) as i32;
+                    let max_y = (map_size.y - 1) as i32;
+
+                    next.x = (next.x as i32).clamp(0, max_x) as u32;
+                    next.y = (next.y as i32).clamp(0, max_y) as u32;
+
+                    *tile_pos = next;
+                }
                 return;
             }
             TurnState::AttackPlayer => {
-                //turn_state_entity.modify_state(TurnState::MoveEnemy);
+                // Attack with player
+                if keys.just_pressed(KeyCode::KeyQ) {
+                    color_player_neighbors(
+                        AttackPattern::Diagonal,
+                        player_query,
+                        tilemap_query,
+                        tile_query,
+                    );
+                    turn_state_entity.modify_state(TurnState::MoveEnemy);
+                } else if keys.just_pressed(KeyCode::KeyW) {
+                    color_player_neighbors(
+                        AttackPattern::Sides,
+                        player_query,
+                        tilemap_query,
+                        tile_query,
+                    );
+                    turn_state_entity.modify_state(TurnState::MoveEnemy);
+                } else if keys.just_pressed(KeyCode::KeyE) {
+                    color_player_neighbors(
+                        AttackPattern::Around,
+                        player_query,
+                        tilemap_query,
+                        tile_query,
+                    );
+                    turn_state_entity.modify_state(TurnState::MoveEnemy);
+                } else if keys.just_pressed(KeyCode::KeyR) {
+                    color_player_neighbors(
+                        AttackPattern::Ultimate,
+                        player_query,
+                        tilemap_query,
+                        tile_query,
+                    );
+                    turn_state_entity.modify_state(TurnState::MoveEnemy);
+                }
+
                 return;
             }
             TurnState::MoveEnemy => {
@@ -65,13 +137,6 @@ pub fn update_game_logic(
             }
         }
     }
-
-    snap_troop_to_tilemap(player_q, tilemap_q);
-
-    update_player_color(player_q2, &colorstate);
-    update_enemy_color(enemy_q, &colorstate);
-
-    animate_sprites(time, query_anim);
 }
 
 fn color_pick_update(
@@ -80,7 +145,7 @@ fn color_pick_update(
     mut color_state: Query<&mut RoundColorState>,
 ) {
     let offset_up = 178.0f32;
-    let offset_right = 41.0f32;
+    let offset_right = 61.0f32;
 
     for mut color_state in color_state.iter_mut() {
         color_state.asign_random_color();
@@ -92,7 +157,7 @@ fn color_pick_update(
             asset_server.load("Spectrum-Red-Sphere.png");
         let texture_handle_green: bevy::prelude::Handle<Image> =
             asset_server.load("Spectrum-Green-Sphere.png");
-        let texture_handle_middle: bevy::prelude::Handle<Image> = asset_server.load("Arrow.png");
+        let texture_handle_middle: bevy::prelude::Handle<Image> = asset_server.load("TEXT.png");
         let texture_handle_arrow: bevy::prelude::Handle<Image> =
             asset_server.load("Spectrum-Masked.png");
 
@@ -159,7 +224,7 @@ fn color_pick_update(
                 ..default()
             },
             Transform::from_xyz(
-                offset_right - 36 as f32,
+                offset_right - 55 as f32,
                 offset_up - 8 as f32,
                 LAYER_UI as f32,
             ),

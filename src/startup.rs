@@ -16,7 +16,7 @@ pub fn setup_scene(
         Camera2d, // Add the setting to the camera.
         // This component is also used to determine on which camera to run the post processing effect.
         post_processing::PostProcessSettings {
-            intensity: 5.2,
+            intensity: 25.2,
             ..default()
         },
     ));
@@ -48,9 +48,8 @@ pub fn setup_scene(
 
     // Spawn Player: troop, player, sprite and transform components.
     commands.spawn((
-        Troop,
         Player,
-        TilePos { x: 10, y: 10 },
+        TilePos { x: 8, y: 3 },
         Transform::from_xyz(0., 0., LAYER_PLAYER as f32),
         Sprite::from_atlas_image(
             texture,

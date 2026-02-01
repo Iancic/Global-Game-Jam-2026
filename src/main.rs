@@ -11,21 +11,22 @@ pub mod components;
 pub mod constants;
 pub mod editor;
 pub mod input;
+pub mod post_processing;
 pub mod startup;
 pub mod text_2d;
 pub mod troop_utilities;
 pub mod update;
 pub mod utilities;
-pub mod post_processing;
 
 use crate::camera::*;
 use crate::editor::*;
 use crate::input::*;
+use crate::post_processing::*;
 use crate::startup::*;
 use crate::text_2d::*;
+use crate::troop_utilities::*;
 use crate::update::*;
-
-use crate::post_processing::*;
+use crate::utilities::update_animated_sprites;
 
 fn main() {
     App::new()
@@ -45,8 +46,9 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()), PostProcessPlugin)
-        )
+                .set(ImagePlugin::default_nearest()),
+            PostProcessPlugin,
+        ))
         .init_resource::<InputFocus>()
         .add_plugins(TilemapPlugin)
         .add_plugins(TiledPlugin::default())
@@ -60,6 +62,9 @@ fn main() {
                 process_keyboard,
                 update_camera,
                 update_game_logic,
+                update_player_troop_to_tilemap,
+                update_enemy_troop_to_tilemap,
+                update_animated_sprites,
                 render_scaled_text,
                 render_post_processing,
             ),

@@ -17,7 +17,7 @@ pub struct RoundColorState {
 impl RoundColorState {
     pub fn asign_random_color(&mut self) {
         let mut rng = rand::rng();
-        self.index = rng.random::<i32>() as i32 % 3; // 0 - red, 1 - green, 2 - blue
+        self.index = rng.random_range(0..3); // 0 - red, 1 - green, 2 - blue
     }
 }
 

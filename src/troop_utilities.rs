@@ -36,8 +36,8 @@ pub fn spawn_enemy(
 }
 
 // Credit: snapping idea to center in world from Codex 5.2
-pub fn snap_troop_to_tilemap(
-    mut player_q: Query<(&TilePos, &mut Transform), With<Troop>>, // All entities with transform, player and position
+pub fn update_player_troop_to_tilemap(
+    mut player_q: Query<(&TilePos, &mut Transform), (With<Player>, Without<Troop>)>, // All entities with transform, player and position
     tilemap_q: Query<
         (
             &TilemapSize,
@@ -57,6 +57,37 @@ pub fn snap_troop_to_tilemap(
     };
 
     for (tile_pos, mut transform) in player_q.iter_mut() {
+        // Retrieve center from the tilemap:
+        let center = tile_pos.center_in_world(map_size, grid_size, tile_size, map_type, anchor);
+
+        // Change the transform from the player
+        transform.translation.x = center.x;
+        transform.translation.y = center.y;
+        transform.translation.z = LAYER_PLAYER as f32;
+    }
+}
+
+pub fn update_enemy_troop_to_tilemap(
+    mut enemy_q: Query<(&TilePos, &mut Transform), (With<Troop>, Without<Player>)>, // All entities with transform, enemy and position
+    tilemap_q: Query<
+        (
+            &TilemapSize,
+            &TilemapGridSize,
+            &TilemapTileSize,
+            &TilemapType,
+            &TilemapAnchor,
+        ),
+        With<PlayZoneTilemap>,
+    >, // Necessary for center in world
+) {
+    // Tries to query for an entity with the data required to snap.
+    // If there is none we have nothing to store, doesn't pass the Ok check move on.
+    let Ok((map_size, grid_size, tile_size, map_type, anchor)) = tilemap_q.single() else {
+        println!("No tilemap.");
+        return;
+    };
+
+    for (tile_pos, mut transform) in enemy_q.iter_mut() {
         // Retrieve center from the tilemap:
         let center = tile_pos.center_in_world(map_size, grid_size, tile_size, map_type, anchor);
 
@@ -255,7 +286,7 @@ pub fn color_player_neighbors(
 // Credit to Claude AI: Sonnet 4.5
 // I needed a quick functional utility similar to what I did for the arrows.
 pub fn update_player_color(
-    mut player_q: Query<&mut Sprite, (With<Player>, Without<Enemy>)>,
+    mut player_q: Query<&mut Sprite, With<Player>>,
     color_state: &Query<&mut RoundColorState>,
 ) {
     if let Ok(color_state) = color_state.single() {
